@@ -1,6 +1,6 @@
 # People Counter System
 
-![![image](https://github.com/user-attachments/assets/908a5e78-847a-4cb7-83d7-e78eaa178fde)]
+![image](https://github.com/user-attachments/assets/908a5e78-847a-4cb7-83d7-e78eaa178fde)
 
 A simple computer vision-based system for counting people crossing a virtual line in real-time video streams.
 
