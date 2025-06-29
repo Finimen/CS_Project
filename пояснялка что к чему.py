@@ -16,16 +16,21 @@ class PeopleCounter:
         self.entry_line_y = entry_line_position
         self.crossing_threshold = 15
         self.log = pd.DataFrame(columns=['timestamp', 'event', 'count'])
+        self.mirror = True  # Флаг для отзеркаливания изображения
 
         # Параметры для фильтрации ложных срабатываний
-        self.min_face_ratio = 0.7  # Минимальное соотношение width/height для лица
-        self.max_face_ratio = 1.5  # Максимальное соотношение width/height
-        self.skin_lower = np.array([0, 48, 80], dtype=np.uint8)  # Нижняя граница цвета кожи (HSV)
-        self.skin_upper = np.array([20, 255, 255], dtype=np.uint8)  # Верхняя граница
-        self.min_skin_pixels = 0.15  # Минимальный процент пикселей кожи в области лица
-        self.match_threshold = 0.7  # Порог для сопоставления детекций с трекерами
+        self.min_face_ratio = 0.7
+        self.max_face_ratio = 1.5
+        self.skin_lower = np.array([0, 48, 80], dtype=np.uint8)
+        self.skin_upper = np.array([20, 255, 255], dtype=np.uint8)
+        self.min_skin_pixels = 0.15
+        self.match_threshold = 0.7
 
     def process_frame(self, frame):
+        # Отзеркаливание изображения
+        if self.mirror:
+            frame = cv2.flip(frame, 1)
+        
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
@@ -38,12 +43,10 @@ class PeopleCounter:
             minSize=(30, 30))
 
         for (x, y, w, h) in raw_faces:
-            # Проверка пропорций лица
             ratio = w / h
             if ratio < self.min_face_ratio or ratio > self.max_face_ratio:
                 continue
 
-            # Проверка цвета кожи
             face_roi = frame[y:y + h, x:x + w]
             face_hsv = cv2.cvtColor(face_roi, cv2.COLOR_BGR2HSV)
             skin_mask = cv2.inRange(face_hsv, self.skin_lower, self.skin_upper)
@@ -52,7 +55,6 @@ class PeopleCounter:
             if skin_percent >= self.min_skin_pixels:
                 faces.append((x, y, w, h))
             else:
-                # Визуализация отбракованных объектов
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
                 cv2.putText(frame, f"Not face: {skin_percent:.1%}",
                             (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
@@ -63,7 +65,6 @@ class PeopleCounter:
         return self._draw_visualization(frame)
 
     def _update_trackers(self, frame, detections):
-        # Удаляем трекеры, которые вышли за границы кадра
         dead_trackers = []
         for t_id in self.trackers:
             if len(self.trackers[t_id]['positions']) > 0:
@@ -77,7 +78,6 @@ class PeopleCounter:
 
         active_ids = set()
 
-        # Обновляем существующие трекеры
         for tracker_id in list(self.trackers.keys()):
             tracker_data = self.trackers[tracker_id]
             success, box = tracker_data['tracker'].update(frame)
@@ -94,15 +94,13 @@ class PeopleCounter:
             else:
                 del self.trackers[tracker_id]
 
-        # Обрабатываем новые обнаружения
         for (x, y, w, h) in detections:
             center = (x + w / 2, y + h / 2)
             matched = False
             min_dist = h * self.match_threshold
 
-            # Сначала пытаемся сопоставить с существующими трекерами
             for t_id in list(self.trackers.keys()):
-                if t_id in active_ids:  # Уже обновленный трекер
+                if t_id in active_ids:
                     continue
                     
                 if not self.trackers[t_id]['positions']:
@@ -112,7 +110,6 @@ class PeopleCounter:
                 dist = abs(center[1] - last_pos)
 
                 if dist < min_dist:
-                    # Обновляем существующий трекер
                     tracker = cv2.TrackerKCF_create()
                     tracker.init(frame, (x, y, w, h))
                     self.trackers[t_id]['tracker'] = tracker
@@ -122,7 +119,6 @@ class PeopleCounter:
                     break
 
             if not matched:
-                # Проверяем пересечение с существующими прямоугольниками
                 overlapping = False
                 current_rect = (x, y, w, h)
                 
@@ -134,7 +130,6 @@ class PeopleCounter:
                             break
                 
                 if not overlapping:
-                    # Создаем новый трекер только если не нашли соответствия
                     tracker = cv2.TrackerKCF_create()
                     tracker.init(frame, (x, y, w, h))
                     self.next_id += 1
@@ -147,16 +142,10 @@ class PeopleCounter:
                     active_ids.add(self.next_id)
 
     def _is_overlapping(self, rect1, rect2):
-        """Проверяет пересекаются ли два прямоугольника"""
         x1, y1, w1, h1 = rect1
         x2, y2, w2, h2 = rect2
-        
-        # Проверка пересечения по оси X
         x_overlap = not (x1 + w1 < x2 or x2 + w2 < x1)
-        
-        # Проверка пересечения по оси Y
         y_overlap = not (y1 + h1 < y2 or y2 + h2 < y1)
-        
         return x_overlap and y_overlap
 
     def _check_line_crossings(self):
@@ -198,16 +187,43 @@ class PeopleCounter:
         ], ignore_index=True)
 
     def _draw_visualization(self, frame):
-        cv2.line(frame,
-                 (0, self.entry_line_y),
-                 (frame.shape[1], self.entry_line_y),
-                 (0, 255, 255), 2)
+        # Рисуем сетку вместо простой линии
+        line_thickness = 2
+        line_color = (0, 255, 255)  # Желтый цвет
+        dash_length = 10
+        gap_length = 5
+        
+        # Вертикальные линии сетки
+        for x in range(0, frame.shape[1], dash_length + gap_length):
+            cv2.line(frame, 
+                     (x, self.entry_line_y), 
+                     (min(x + dash_length, frame.shape[1]), self.entry_line_y), 
+                     line_color, line_thickness)
+        
+        # Добавляем стрелки направления
+        arrow_length = 20
+        cv2.arrowedLine(frame, 
+                       (frame.shape[1] - 50, self.entry_line_y - 30),
+                       (frame.shape[1] - 50, self.entry_line_y - 10),
+                       (0, 255, 0), 2, tipLength=0.3)  # Стрелка входа
+        cv2.putText(frame, "Entry", 
+                   (frame.shape[1] - 45, self.entry_line_y - 35), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        
+        cv2.arrowedLine(frame, 
+                       (frame.shape[1] - 50, self.entry_line_y + 10),
+                       (frame.shape[1] - 50, self.entry_line_y + 30),
+                       (0, 0, 255), 2, tipLength=0.3)  # Стрелка выхода
+        cv2.putText(frame, "Exit", 
+                   (frame.shape[1] - 45, self.entry_line_y + 45), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
+        # Отображение счетчика
         cv2.putText(frame, f"People: {self.people_count}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         for tracker_id, tracker_data in self.trackers.items():
-            if len(tracker_data['positions']) < 3:  # Показываем только трекеры с историей
+            if len(tracker_data['positions']) < 3:
                 continue
                 
             success, box = tracker_data['tracker'].update(frame)
@@ -243,8 +259,16 @@ if __name__ == "__main__":
         frame = counter.process_frame(frame)
         cv2.imshow('People Counter', frame)
 
-        if cv2.waitKey(1) == ord('q'):
+        # Обработка клавиш
+        key = cv2.waitKey(1)
+        if key == ord('q'):
             break
+        elif key == ord('m'):  # Переключение отзеркаливания
+            counter.mirror = not counter.mirror
+        elif key == ord('l'):  # Перемещение линии вверх
+            counter.entry_line_y = max(50, counter.entry_line_y - 10)
+        elif key == ord('k'):  # Перемещение линии вниз
+            counter.entry_line_y = min(frame.shape[0] - 50, counter.entry_line_y + 10)
 
     cap.release()
     cv2.destroyAllWindows()
